@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>패턴 스크리너</title>
+<script src="vendor/lightweight-charts.js"></script>
+<style>
+:root {
+  --bg: #0e1117; --surface: #161b24; --surface2: #1d2430;
+  --border: #2a3342; --ink: #e6e9ef; --ink2: #9aa4b2; --ink3: #6b7585;
+  --accent: #4f8ff7; --up: #f04452; --down: #3182f6;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: "Pretendard", "Malgun Gothic", system-ui, sans-serif;
+  font-size: 14px; line-height: 1.5;
+}
+header { padding: 18px 24px 0; }
+header h1 { font-size: 19px; font-weight: 700; }
+header .meta { color: var(--ink2); font-size: 12.5px; margin-top: 3px; }
+.tabs { display: flex; gap: 6px; padding: 14px 24px 0; flex-wrap: wrap; }
+.tab {
+  background: var(--surface); border: 1px solid var(--border); color: var(--ink2);
+  padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13.5px;
+}
+.tab:hover { color: var(--ink); }
+.tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.tab .cnt { opacity: .75; margin-left: 4px; font-size: 12px; }
+.layout { display: grid; grid-template-columns: minmax(430px, 46%) 1fr; gap: 16px; padding: 14px 24px 24px; align-items: start; }
+@media (max-width: 980px) { .layout { grid-template-columns: 1fr; } .chartwrap { position: static !important; } }
+.tablewrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: auto; max-height: calc(100vh - 150px); }
+table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+th, td { padding: 8px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; padding-left: 14px; }
+thead th {
+  position: sticky; top: 0; background: var(--surface2); color: var(--ink2);
+  font-size: 12px; font-weight: 600; cursor: pointer; user-select: none; z-index: 2;
+  border-bottom: 1px solid var(--border);
+}
+thead th.sorted { color: var(--accent); }
+tbody tr { cursor: pointer; border-top: 1px solid var(--border); }
+tbody tr:hover { background: var(--surface2); }
+tbody tr.selected { background: #24304a; }
+td.up { color: var(--up); } td.dn { color: var(--down); }
+.nm { font-weight: 600; }
+.mkt { color: var(--ink3); font-size: 11px; margin-left: 5px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--surface2); border: 1px solid var(--border); color: var(--ink2); }
+.badge.hot { color: var(--up); border-color: var(--up); }
+.chartwrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; position: sticky; top: 12px; }
+.chart-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.chart-head h2 { font-size: 16px; }
+.chart-head .sub { color: var(--ink2); font-size: 12.5px; }
+#chart { width: 100%; height: 460px; }
+.placeholder { color: var(--ink3); text-align: center; padding: 120px 0; font-size: 13.5px; }
+.detailline { color: var(--ink2); font-size: 12.5px; margin-top: 8px; }
+footer { color: var(--ink3); font-size: 11.5px; padding: 0 24px 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>패턴 스크리너 <span style="color:var(--ink3);font-weight:400;font-size:13px">KOSPI·KOSDAQ 시총 3,000억+</span></h1>
+  <div class="meta" id="meta">데이터 로딩 중…</div>
+</header>
+<nav class="tabs" id="tabs"></nav>
+<div class="layout">
+  <div class="tablewrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  <div class="chartwrap">
+    <div class="chart-head" id="chartHead"><h2>차트</h2><span class="sub">왼쪽 목록에서 종목을 클릭하세요</span></div>
+    <div id="chart"><div class="placeholder">종목을 선택하면 캔들차트가 표시됩니다</div></div>
+    <div class="detailline" id="detail"></div>
+  </div>
+</div>
+<footer>KRX 정규장 데이터 기준(NXT 체결분 미포함) · 장 마감 후 1회 자동 갱신 · 투자 판단의 참고 자료일 뿐 매매 권유가 아닙니다.</footer>
+<script src="app.js"></script>
+</body>
+</html>
