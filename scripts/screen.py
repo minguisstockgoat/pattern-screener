@@ -35,9 +35,12 @@ HIST_COLS = ["date", "ticker", "name", "market", "open", "high", "low", "close",
 # ---------------------------------------------------------------- 수집
 
 def api_key():
-    key = os.environ.get("KRX_API_KEY", "").strip()
+    # secret에 BOM이나 zero-width 문자가 섞이면 HTTP 헤더(latin-1) 인코딩에서 터진다
+    key = os.environ.get("KRX_API_KEY", "").strip().strip("﻿​").strip()
     if not key:
         sys.exit("KRX_API_KEY 환경변수가 없습니다.")
+    if not key.isascii():
+        sys.exit("KRX_API_KEY에 ASCII가 아닌 문자가 있습니다. 시크릿을 다시 등록하세요.")
     return key
 
 
