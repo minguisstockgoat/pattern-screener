@@ -157,6 +157,12 @@ def detect_double_bottom(b):
             depth = neck / ((l1 + l2) / 2) - 1
             if not (0.06 <= depth <= 0.60):
                 continue
+            # 반등 고점(넥라인)이 두 저점 사이 한쪽에 과도하게 치우치면 W자가 아님
+            # (예: 초반 스파이크 후 긴 횡보 끝의 저점을 쌍바닥으로 오인하는 케이스)
+            peak_i = max(range(p1, p2 + 1), key=lambda i: hi[i])
+            lim = max(15, int(gap * 0.6))
+            if p2 - peak_i > lim or peak_i - p1 > lim:
+                continue
             # 두 저점 사이에서 넥라인 대비 충분히 반등했는지 (V자 2개 형태)
             last = cl[-1]
             broke_idx = next((i for i in range(max(p2, n - 8), n) if cl[i] > neck), None)
@@ -279,15 +285,25 @@ def detect_box_breakout(b):
     box_hi = max(hi[-41:-1])
     box_lo = min(lo[-41:-1])
     width = (box_hi - box_lo) / box_lo
-    if width > 0.18 or cl[-1] <= box_hi:
+    if width > 0.18 or box_lo <= 0:
         return None
+    last = cl[-1]
     vol_ratio = vol[-1] / (sum(vol[-21:-1]) / 20 + 1e-9)
-    score = round(40 * (1 - width / 0.18) + 40 * min(vol_ratio / 3, 1) + 20, 1)
+    if last > box_hi:
+        status = "돌파"
+        score = 40 * (1 - width / 0.18) + 40 * min(vol_ratio / 3, 1) + 20
+        tail = f"돌파 / 거래량 {vol_ratio:.1f}배"
+    elif last >= box_hi * 0.97:
+        status = "형성중"  # 박스 상단 3% 이내 접근
+        score = 40 * (1 - width / 0.18) + 20 * (1 - (box_hi - last) / (box_hi * 0.03))
+        tail = f"상단 접근({(last / box_hi - 1) * 100:+.1f}%)"
+    else:
+        return None
     return {
-        "score": score, "status": "돌파",
+        "score": round(score, 1), "status": status,
         "box_high": box_hi, "box_low": box_lo,
         "width_pct": round(width * 100, 1), "vol_ratio": round(vol_ratio, 1),
-        "detail": f"박스 {box_lo:,.0f}~{box_hi:,.0f} (폭 {width * 100:.0f}%) 돌파 / 거래량 {vol_ratio:.1f}배",
+        "detail": f"박스 {box_lo:,.0f}~{box_hi:,.0f} (폭 {width * 100:.0f}%) {tail}",
     }
 
 
