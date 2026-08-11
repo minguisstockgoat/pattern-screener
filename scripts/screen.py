@@ -186,55 +186,69 @@ def detect_head_shoulders(b):
     """헤드앤숄더: 어깨-머리-어깨 형성 후 오른어깨 우측에서 넥라인 하향 이탈."""
     n = len(b["close"])
     lo, hi, cl = b["low"], b["high"], b["close"]
-    piv = [i for i in pivots(hi, 3, "high") if i >= n - 160]
+    win_start = max(0, n - 160)
+    # 머리 = 최근 160거래일의 실제 최고점 봉 (천장 패턴이므로 그 위에 봉우리가 없어야 함)
+    hd = max(range(win_start, n), key=lambda i: hi[i])
+    h = hi[hd]
+    if hd < win_start + 10 or hd > n - 10:
+        return None  # 머리가 구간 양끝에 붙어 있으면 좌/우 어깨 성립 불가
+    piv = pivots(hi, 3, "high")
+    left = [i for i in piv if win_start <= i < hd - 4]
+    right = [i for i in piv if hd + 4 < i < n]
     best = None
-    for a in range(len(piv) - 2):
-        for m in range(a + 1, len(piv) - 1):
-            for r in range(m + 1, len(piv)):
-                ls, hd, rs = piv[a], piv[m], piv[r]
-                if not (25 <= rs - ls <= 140):
-                    continue
-                s1, h, s2 = hi[ls], hi[hd], hi[rs]
-                if h < max(s1, s2) * 1.03:      # 머리가 어깨보다 3% 이상 높아야
-                    continue
-                sym = abs(s1 - s2) / min(s1, s2)
-                if sym > 0.06:                   # 양 어깨 높이 비슷해야
-                    continue
-                g1, g2 = hd - ls, rs - hd
-                if not (0.4 <= g1 / g2 <= 2.5):  # 좌우 간격 균형
-                    continue
-                t1i = min(range(ls, hd + 1), key=lambda i: lo[i])
-                t2i = min(range(hd, rs + 1), key=lambda i: lo[i])
-                t1, t2 = lo[t1i], lo[t2i]
-                if t1 <= 0 or t2 <= 0 or t2i == t1i:
-                    continue
+    for ls in left:
+        for rs in right:
+            if not (25 <= rs - ls <= 140):
+                continue
+            s1, s2 = hi[ls], hi[rs]
+            if h < max(s1, s2) * 1.03:      # 머리가 어깨보다 3% 이상 높아야
+                continue
+            if max(hi[rs:]) > s2:           # 오른어깨 이후 더 높은 봉우리가 없어야
+                continue
+            sym = abs(s1 - s2) / min(s1, s2)
+            if sym > 0.08:                   # 양 어깨 높이 비슷해야
+                continue
+            g1, g2 = hd - ls, rs - hd
+            if not (0.4 <= g1 / g2 <= 2.5):  # 좌우 간격 균형
+                continue
+            t1i = min(range(ls, hd + 1), key=lambda i: lo[i])
+            t2i = min(range(hd, rs + 1), key=lambda i: lo[i])
+            t1, t2 = lo[t1i], lo[t2i]
+            if t1 <= 0 or t2 <= 0 or t2i == t1i:
+                continue
+            if abs(t2 - t1) / min(t1, t2) > 0.10:  # 넥라인 과도한 기울기 배제
+                continue
+            if max(hi[ls:t1i + 1]) > s1:    # 왼어깨는 자기~첫 골 구간의 최고점
+                continue
+            if max(hi[t2i:rs + 1]) > s2:    # 오른어깨는 둘째 골~자기 구간의 최고점
+                continue
 
-                def neck(i):  # 두 골을 잇는 기울어진 넥라인
-                    return t1 + (t2 - t1) * (i - t1i) / (t2i - t1i)
+            def neck(i):  # 두 골을 잇는 기울어진 넥라인
+                return t1 + (t2 - t1) * (i - t1i) / (t2i - t1i)
 
-                depth = h / ((t1 + t2) / 2) - 1
-                if not (0.06 <= depth <= 0.35):
-                    continue
-                # 오른어깨 이후 넥라인 하향 이탈 + 현재도 넥라인 아래
-                brk = next((i for i in range(rs + 1, n) if cl[i] < neck(i)), None)
-                if brk is None or brk < n - 15 or cl[-1] >= neck(n - 1):
-                    continue
-                score = (30 * min(depth / 0.20, 1)
-                         + 25 * (1 - sym / 0.06)
-                         + 25 * max(0.0, 1 - (n - 1 - brk) / 15)
-                         + 20 * min((h / max(s1, s2) - 1) / 0.10, 1))
-                cand = {
-                    "score": round(score, 1), "status": "이탈",
-                    "ls_date": b["date"][ls], "hd_date": b["date"][hd], "rs_date": b["date"][rs],
-                    "t1_date": b["date"][t1i], "t2_date": b["date"][t2i],
-                    "t1": t1, "t2": t2, "brk_date": b["date"][brk],
-                    "neck_last": round(neck(n - 1), 2),
-                    "depth_pct": round(depth * 100, 1),
-                    "detail": (f"어깨 {s1:,.0f}·{s2:,.0f} / 머리 {h:,.0f} / "
-                               f"넥라인 이탈 {b['date'][brk][4:6]}/{b['date'][brk][6:]}"),
-                }
-                if best is None or cand["score"] > best["score"]:
-                    best = cand
+            depth = h / ((t1 + t2) / 2) - 1
+            if not (0.05 <= depth <= 0.45):
+                continue
+            # 오른어깨 이후 넥라인 하향 이탈 + 현재도 넥라인 아래
+            brk = next((i for i in range(rs + 1, n) if cl[i] < neck(i)), None)
+            if brk is None or brk < n - 20 or cl[-1] >= neck(n - 1):
+                continue
+            score = (30 * min(depth / 0.20, 1)
+                     + 25 * (1 - sym / 0.08)
+                     + 25 * max(0.0, 1 - (n - 1 - brk) / 20)
+                     + 20 * min((h / max(s1, s2) - 1) / 0.10, 1))
+            cand = {
+                "score": round(score, 1), "status": "이탈",
+                "ls_date": b["date"][ls], "hd_date": b["date"][hd], "rs_date": b["date"][rs],
+                "t1_date": b["date"][t1i], "t2_date": b["date"][t2i],
+                "t1": t1, "t2": t2, "brk_date": b["date"][brk],
+                "neck_last": round(neck(n - 1), 2),
+                "depth_pct": round(depth * 100, 1),
+                "detail": (f"어깨 {s1:,.0f}·{s2:,.0f} / 머리 {h:,.0f} / "
+                           f"넥라인 이탈 {b['date'][brk][4:6]}/{b['date'][brk][6:]}"),
+            }
+            if best is None or cand["score"] > best["score"]:
+                best = cand
     return best
 
 
