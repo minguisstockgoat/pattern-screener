@@ -138,6 +138,7 @@ def detect_double_bottom(b):
     n = len(b["close"])
     lo, hi, cl = b["low"], b["high"], b["close"]
     piv = [i for i in pivots(lo, 3, "low") if i >= n - 140]
+    range_low = min(lo[-120:])
     best = None
     for a in range(len(piv)):
         for c in range(a + 1, len(piv)):
@@ -147,11 +148,14 @@ def detect_double_bottom(b):
                 continue
             l1, l2 = lo[p1], lo[p2]
             diff = abs(l1 - l2) / min(l1, l2)
-            if diff > 0.04:
+            if diff > 0.03:
+                continue
+            # 두 저점이 최근 120일 레인지의 실제 바닥 부근이어야 진짜 쌍바닥
+            if max(l1, l2) > range_low * 1.03:
                 continue
             neck = max(hi[p1:p2 + 1])
             depth = neck / ((l1 + l2) / 2) - 1
-            if depth < 0.05:
+            if not (0.06 <= depth <= 0.25):
                 continue
             # 두 저점 사이에서 넥라인 대비 충분히 반등했는지 (V자 2개 형태)
             last = cl[-1]
@@ -182,6 +186,7 @@ def detect_double_top(b):
     n = len(b["close"])
     lo, hi, cl = b["low"], b["high"], b["close"]
     piv = [i for i in pivots(hi, 3, "high") if i >= n - 140]
+    range_high = max(hi[-120:])
     best = None
     for a in range(len(piv)):
         for c in range(a + 1, len(piv)):
@@ -191,11 +196,16 @@ def detect_double_top(b):
                 continue
             h1, h2 = hi[p1], hi[p2]
             diff = abs(h1 - h2) / min(h1, h2)
-            if diff > 0.04:
+            if diff > 0.03:
+                continue
+            # 두 고점이 최근 120일 레인지의 실제 천장 부근이어야 진짜 쌍봉
+            if min(h1, h2) < range_high * 0.97:
                 continue
             neck = min(lo[p1:p2 + 1])
+            if neck <= 0:
+                continue
             depth = (h1 + h2) / 2 / neck - 1
-            if depth < 0.05:
+            if not (0.06 <= depth <= 0.25):
                 continue
             last = cl[-1]
             broke_idx = next((i for i in range(max(p2, n - 8), n) if cl[i] < neck), None)
@@ -293,8 +303,8 @@ def build():
             continue
         b = {k: [float(r[k]) for r in rs] for k in ("open", "high", "low", "close", "volume")}
         b["date"] = [r["date"] for r in rs]
-        if 0.0 in b["close"][-60:]:
-            continue  # 최근 무거래/정지 이력
+        if 0.0 in b["close"][-150:] or 0.0 in b["low"][-150:]:
+            continue  # 무거래/거래정지 이력 (패턴 탐색 구간 내 0원 봉)
 
         prev_close = b["close"][-2]
         base = {
