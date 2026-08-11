@@ -19,10 +19,11 @@ const IND_DEFS = [
   { key: "ma60", label: "MA60", color: "#2fbf71" },
   { key: "ma120", label: "MA120", color: "#bb6bd9" },
   { key: "bb", label: "볼린저(20,2σ)", color: "#8899aa" },
+  { key: "env", label: "Envelope(20,±6%)", color: "#d96ba8" },
   { key: "rsi", label: "RSI(14)", color: "#4f8ff7" },
   { key: "macd", label: "MACD(12,26,9)", color: "#f2994a" },
 ];
-const IND_DEFAULT = { ma5: false, ma20: true, ma60: true, ma120: false, bb: false, rsi: false, macd: false };
+const IND_DEFAULT = { ma5: false, ma20: true, ma60: true, ma120: false, bb: false, env: false, rsi: false, macd: false };
 
 let DATA = null;
 let state = { tab: "double_bottom", sortKey: "score", sortDesc: true, selected: null };
@@ -268,6 +269,13 @@ function drawChart(d, row) {
     overlayLine(bb.upper, "#8899aa");
     overlayLine(bb.mid, "#8899aa", 1, LWC.LineStyle.Dotted);
     overlayLine(bb.lower, "#8899aa");
+  }
+  if (ind.env) {
+    const mid = smaSeries(d.candles, 20);
+    const pct = 0.06;
+    overlayLine(mid.map((p) => ({ time: p.time, value: p.value * (1 + pct) })), "#d96ba8");
+    overlayLine(mid, "#d96ba8", 1, LWC.LineStyle.Dotted);
+    overlayLine(mid.map((p) => ({ time: p.time, value: p.value * (1 - pct) })), "#d96ba8");
   }
 
   // 패턴 마커·넥라인
