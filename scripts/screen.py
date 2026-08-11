@@ -138,7 +138,6 @@ def detect_double_bottom(b):
     n = len(b["close"])
     lo, hi, cl = b["low"], b["high"], b["close"]
     piv = [i for i in pivots(lo, 3, "low") if i >= n - 140]
-    range_low = min(lo[-120:])
     best = None
     for a in range(len(piv)):
         for c in range(a + 1, len(piv)):
@@ -150,12 +149,13 @@ def detect_double_bottom(b):
             diff = abs(l1 - l2) / min(l1, l2)
             if diff > 0.03:
                 continue
-            # 두 저점이 최근 120일 레인지의 실제 바닥 부근이어야 진짜 쌍바닥
-            if max(l1, l2) > range_low * 1.03:
+            # 첫 저점 20일 전부터 현재까지 두 저점보다 낮은 가격이 없어야
+            # (두 저점이 해당 구조의 실제 바닥이어야 진짜 쌍바닥)
+            if min(lo[max(0, p1 - 20):]) < min(l1, l2) * 0.99:
                 continue
             neck = max(hi[p1:p2 + 1])
             depth = neck / ((l1 + l2) / 2) - 1
-            if not (0.06 <= depth <= 0.25):
+            if not (0.06 <= depth <= 0.60):
                 continue
             # 두 저점 사이에서 넥라인 대비 충분히 반등했는지 (V자 2개 형태)
             last = cl[-1]
