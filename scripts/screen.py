@@ -192,8 +192,8 @@ def detect_head_shoulders(b):
     """헤드앤숄더: 어깨-머리-어깨 형성 후 오른어깨 우측에서 넥라인 하향 이탈."""
     n = len(b["close"])
     lo, hi, cl = b["low"], b["high"], b["close"]
-    win_start = max(0, n - 160)
-    # 머리 = 최근 160거래일의 실제 최고점 봉 (천장 패턴이므로 그 위에 봉우리가 없어야 함)
+    win_start = max(0, n - 55)
+    # 머리 = 최근 55거래일의 실제 최고점 봉 (천장 패턴이므로 그 위에 봉우리가 없어야 함)
     hd = max(range(win_start, n), key=lambda i: hi[i])
     h = hi[hd]
     if hd < win_start + 10 or hd > n - 10:
@@ -204,7 +204,7 @@ def detect_head_shoulders(b):
     best = None
     for ls in left:
         for rs in right:
-            if not (25 <= rs - ls <= 140):
+            if not (15 <= rs - ls <= 50):
                 continue
             s1, s2 = hi[ls], hi[rs]
             if h < max(s1, s2) * 1.03:      # 머리가 어깨보다 3% 이상 높아야
@@ -235,23 +235,33 @@ def detect_head_shoulders(b):
             depth = h / ((t1 + t2) / 2) - 1
             if not (0.05 <= depth <= 0.45):
                 continue
-            # 오른어깨 이후 넥라인 하향 이탈 + 현재도 넥라인 아래
             brk = next((i for i in range(rs + 1, n) if cl[i] < neck(i)), None)
-            if brk is None or brk < n - 20 or cl[-1] >= neck(n - 1):
+            last_neck = neck(n - 1)
+            if brk is not None and brk >= n - 20 and cl[-1] < last_neck:
+                status = "이탈"  # 오른어깨 이후 최근 20일 내 하향 이탈 + 현재도 아래
+                timing = 25 * max(0.0, 1 - (n - 1 - brk) / 20)
+            elif brk is None and last_neck <= cl[-1] <= min(s2, last_neck * 1.15):
+                status = "형성중"  # 패턴 완성, 넥라인 위에서 이탈 대기
+                room = max(s2 - last_neck, 1e-9)
+                timing = 25 * max(0.0, 1 - (cl[-1] - last_neck) / room)  # 넥라인에 가까울수록 높음
+            else:
                 continue
             score = (30 * min(depth / 0.20, 1)
                      + 25 * (1 - sym / 0.08)
-                     + 25 * max(0.0, 1 - (n - 1 - brk) / 20)
-                     + 20 * min((h / max(s1, s2) - 1) / 0.10, 1))
+                     + timing
+                     + 20 * min((h / max(s1, s2) - 1) / 0.10, 1)
+                     + (10 if status == "이탈" else 0))
             cand = {
-                "score": round(score, 1), "status": "이탈",
+                "score": round(score, 1), "status": status,
                 "ls_date": b["date"][ls], "hd_date": b["date"][hd], "rs_date": b["date"][rs],
                 "t1_date": b["date"][t1i], "t2_date": b["date"][t2i],
-                "t1": t1, "t2": t2, "brk_date": b["date"][brk],
-                "neck_last": round(neck(n - 1), 2),
+                "t1": t1, "t2": t2,
+                "neck_last": round(last_neck, 2),
                 "depth_pct": round(depth * 100, 1),
                 "detail": (f"어깨 {s1:,.0f}·{s2:,.0f} / 머리 {h:,.0f} / "
-                           f"넥라인 이탈 {b['date'][brk][4:6]}/{b['date'][brk][6:]}"),
+                           + (f"넥라인 이탈 {b['date'][brk][4:6]}/{b['date'][brk][6:]}"
+                              if status == "이탈" else
+                              f"넥라인 {last_neck:,.0f} 대기(+{(cl[-1] / last_neck - 1) * 100:.1f}%)")),
             }
             if best is None or cand["score"] > best["score"]:
                 best = cand
