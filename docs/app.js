@@ -26,7 +26,7 @@ const IND_DEFS = [
 const IND_DEFAULT = { ma5: false, ma20: true, ma60: true, ma120: false, bb: false, env: false, rsi: false, macd: false };
 
 let DATA = null;
-let state = { tab: "double_bottom", sortKey: "score", sortDesc: true, selected: null };
+let state = { tab: "double_bottom", sortKey: "score", sortDesc: true, selected: null, status: "전체" };
 let chart = null;
 let lastChart = null; // {d, row} 재렌더용
 let ind = loadInd();
@@ -61,13 +61,38 @@ function renderTabs() {
     const btn = document.createElement("button");
     btn.className = "tab" + (state.tab === p.key ? " active" : "");
     btn.innerHTML = `${p.label}<span class="cnt">${(DATA.patterns[p.key] || []).length}</span>`;
-    btn.onclick = () => { state.tab = p.key; state.sortKey = "score"; state.sortDesc = true; renderTabs(); renderTable(); };
+    btn.onclick = () => {
+      state.tab = p.key; state.sortKey = "score"; state.sortDesc = true; state.status = "전체";
+      renderTabs(); renderTable();
+    };
     nav.appendChild(btn);
+  }
+  renderStatusBar();
+}
+
+function renderStatusBar() {
+  const bar = document.getElementById("statusbar");
+  const list = DATA.patterns[state.tab] || [];
+  const statuses = [...new Set(list.map((r) => r.status))];
+  if (statuses.length < 2) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  bar.innerHTML = "";
+  for (const st of ["전체", ...statuses]) {
+    const cnt = st === "전체" ? list.length : list.filter((r) => r.status === st).length;
+    const chip = document.createElement("button");
+    chip.className = "st-chip" + (state.status === st ? " on" : "");
+    chip.innerHTML = `${st}<span class="cnt">${cnt}</span>`;
+    chip.onclick = () => { state.status = st; renderStatusBar(); renderTable(); };
+    bar.appendChild(chip);
   }
 }
 
 function rows() {
-  const list = [...(DATA.patterns[state.tab] || [])];
+  let list = [...(DATA.patterns[state.tab] || [])];
+  if (state.status !== "전체") list = list.filter((r) => r.status === state.status);
   const { sortKey, sortDesc } = state;
   const numCol = COLS.find((c) => c.key === sortKey)?.num;
   list.sort((a, b) => {
