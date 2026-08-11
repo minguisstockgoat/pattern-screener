@@ -1,6 +1,6 @@
 const PATTERNS = [
   { key: "double_bottom", label: "쌍바닥" },
-  { key: "double_top", label: "쌍봉" },
+  { key: "head_shoulders", label: "헤드앤숄더" },
   { key: "box_breakout", label: "박스권 돌파" },
   { key: "high_52w", label: "52주 신고가" },
   { key: "high_60d", label: "60일 신고가" },
@@ -126,6 +126,15 @@ function drawChart(d, row) {
   candleSeries.setMarkers((d.markers || []).map((m) => ({
     ...m, color: m.position === "belowBar" ? c("--up") : c("--down"), size: 1,
   })));
+  for (const seg of d.segments || []) {
+    const s = chart.addLineSeries({
+      color: c("--accent"), lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceLineVisible: false, lastValueVisible: false,
+      crosshairMarkerVisible: false, title: seg.title,
+    });
+    s.setData(seg.points);
+  }
   for (const ln of d.lines || []) {
     candleSeries.createPriceLine({
       price: ln.price, title: ln.title, color: c("--accent"),

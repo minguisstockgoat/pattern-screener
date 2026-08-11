@@ -182,52 +182,59 @@ def detect_double_bottom(b):
     return best
 
 
-def detect_double_top(b):
+def detect_head_shoulders(b):
+    """헤드앤숄더: 어깨-머리-어깨 형성 후 오른어깨 우측에서 넥라인 하향 이탈."""
     n = len(b["close"])
     lo, hi, cl = b["low"], b["high"], b["close"]
-    piv = [i for i in pivots(hi, 3, "high") if i >= n - 140]
-    range_high = max(hi[-120:])
+    piv = [i for i in pivots(hi, 3, "high") if i >= n - 160]
     best = None
-    for a in range(len(piv)):
-        for c in range(a + 1, len(piv)):
-            p1, p2 = piv[a], piv[c]
-            gap = p2 - p1
-            if not (10 <= gap <= 80) or p2 < n - 45:
-                continue
-            h1, h2 = hi[p1], hi[p2]
-            diff = abs(h1 - h2) / min(h1, h2)
-            if diff > 0.03:
-                continue
-            # 두 고점이 최근 120일 레인지의 실제 천장 부근이어야 진짜 쌍봉
-            if min(h1, h2) < range_high * 0.97:
-                continue
-            neck = min(lo[p1:p2 + 1])
-            if neck <= 0:
-                continue
-            depth = (h1 + h2) / 2 / neck - 1
-            if not (0.06 <= depth <= 0.25):
-                continue
-            last = cl[-1]
-            broke_idx = next((i for i in range(max(p2, n - 8), n) if cl[i] < neck), None)
-            if broke_idx is not None and last < neck:
-                status = "이탈"
-            elif last >= neck and last <= max(h1, h2) * 1.01 and p2 >= n - 30:
-                status = "형성중"
-            else:
-                continue
-            score = (40 * min(depth / 0.15, 1)
-                     + 30 * (1 - diff / 0.04)
-                     + 20 * max(0.0, 1 - (n - 1 - p2) / 45)
-                     + (10 if status == "이탈" else 0))
-            cand = {
-                "score": round(score, 1), "status": status,
-                "p1_date": b["date"][p1], "p2_date": b["date"][p2],
-                "high1": h1, "high2": h2, "neckline": neck,
-                "depth_pct": round(depth * 100, 1),
-                "detail": f"고점 {h1:,.0f}·{h2:,.0f} / 넥라인 {neck:,.0f} ({status})",
-            }
-            if best is None or cand["score"] > best["score"]:
-                best = cand
+    for a in range(len(piv) - 2):
+        for m in range(a + 1, len(piv) - 1):
+            for r in range(m + 1, len(piv)):
+                ls, hd, rs = piv[a], piv[m], piv[r]
+                if not (25 <= rs - ls <= 140):
+                    continue
+                s1, h, s2 = hi[ls], hi[hd], hi[rs]
+                if h < max(s1, s2) * 1.03:      # 머리가 어깨보다 3% 이상 높아야
+                    continue
+                sym = abs(s1 - s2) / min(s1, s2)
+                if sym > 0.06:                   # 양 어깨 높이 비슷해야
+                    continue
+                g1, g2 = hd - ls, rs - hd
+                if not (0.4 <= g1 / g2 <= 2.5):  # 좌우 간격 균형
+                    continue
+                t1i = min(range(ls, hd + 1), key=lambda i: lo[i])
+                t2i = min(range(hd, rs + 1), key=lambda i: lo[i])
+                t1, t2 = lo[t1i], lo[t2i]
+                if t1 <= 0 or t2 <= 0 or t2i == t1i:
+                    continue
+
+                def neck(i):  # 두 골을 잇는 기울어진 넥라인
+                    return t1 + (t2 - t1) * (i - t1i) / (t2i - t1i)
+
+                depth = h / ((t1 + t2) / 2) - 1
+                if not (0.06 <= depth <= 0.35):
+                    continue
+                # 오른어깨 이후 넥라인 하향 이탈 + 현재도 넥라인 아래
+                brk = next((i for i in range(rs + 1, n) if cl[i] < neck(i)), None)
+                if brk is None or brk < n - 15 or cl[-1] >= neck(n - 1):
+                    continue
+                score = (30 * min(depth / 0.20, 1)
+                         + 25 * (1 - sym / 0.06)
+                         + 25 * max(0.0, 1 - (n - 1 - brk) / 15)
+                         + 20 * min((h / max(s1, s2) - 1) / 0.10, 1))
+                cand = {
+                    "score": round(score, 1), "status": "이탈",
+                    "ls_date": b["date"][ls], "hd_date": b["date"][hd], "rs_date": b["date"][rs],
+                    "t1_date": b["date"][t1i], "t2_date": b["date"][t2i],
+                    "t1": t1, "t2": t2, "brk_date": b["date"][brk],
+                    "neck_last": round(neck(n - 1), 2),
+                    "depth_pct": round(depth * 100, 1),
+                    "detail": (f"어깨 {s1:,.0f}·{s2:,.0f} / 머리 {h:,.0f} / "
+                               f"넥라인 이탈 {b['date'][brk][4:6]}/{b['date'][brk][6:]}"),
+                }
+                if best is None or cand["score"] > best["score"]:
+                    best = cand
     return best
 
 
@@ -288,7 +295,7 @@ def build():
         by_ticker.setdefault(r["ticker"], []).append(r)
     latest_date = max(r["date"] for r in rows)
 
-    summary = {"double_bottom": [], "double_top": [], "high_52w": [], "high_60d": [], "box_breakout": []}
+    summary = {"double_bottom": [], "head_shoulders": [], "high_52w": [], "high_60d": [], "box_breakout": []}
     charts = {}
 
     for ticker, rs in by_ticker.items():
@@ -317,9 +324,9 @@ def build():
         db = detect_double_bottom(b)
         if db:
             found["double_bottom"] = db
-        dt = detect_double_top(b)
-        if dt:
-            found["double_top"] = dt
+        hs = detect_head_shoulders(b)
+        if hs:
+            found["head_shoulders"] = hs
         h52 = detect_new_high(b, 252)
         if h52:
             found["high_52w"] = h52
@@ -369,17 +376,26 @@ def make_chart_payload(b, base, found):
             {"time": iso(db["p2_date"]), "position": "belowBar", "shape": "arrowUp", "text": "저점2"},
         ]
         payload["lines"].append({"price": db["neckline"], "title": "쌍바닥 넥라인"})
-    dt = found.get("double_top")
-    if dt:
+    hs = found.get("head_shoulders")
+    if hs:
         payload["markers"] += [
-            {"time": iso(dt["p1_date"]), "position": "aboveBar", "shape": "arrowDown", "text": "고점1"},
-            {"time": iso(dt["p2_date"]), "position": "aboveBar", "shape": "arrowDown", "text": "고점2"},
+            {"time": iso(hs["ls_date"]), "position": "aboveBar", "shape": "arrowDown", "text": "왼어깨"},
+            {"time": iso(hs["hd_date"]), "position": "aboveBar", "shape": "arrowDown", "text": "머리"},
+            {"time": iso(hs["rs_date"]), "position": "aboveBar", "shape": "arrowDown", "text": "오른어깨"},
         ]
-        payload["lines"].append({"price": dt["neckline"], "title": "쌍봉 넥라인"})
+        payload["segments"] = payload.get("segments", []) + [{
+            "title": "H&S 넥라인",
+            "points": [
+                {"time": iso(hs["t1_date"]), "value": hs["t1"]},
+                {"time": iso(hs["t2_date"]), "value": hs["t2"]},
+                {"time": iso(b["date"][-1]), "value": hs["neck_last"]},
+            ],
+        }]
     bo = found.get("box_breakout")
     if bo:
         payload["lines"].append({"price": bo["box_high"], "title": "박스 상단"})
         payload["lines"].append({"price": bo["box_low"], "title": "박스 하단"})
+    payload["markers"].sort(key=lambda m: m["time"])
     return payload
 
 
