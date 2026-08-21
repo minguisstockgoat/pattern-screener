@@ -5,14 +5,28 @@ const PATTERNS = [
   { key: "high_52w", label: "52주 신고가" },
   { key: "high_60d", label: "60일 신고가" },
 ];
-const COLS = [
+const BASE_COLS = [
   { key: "name", label: "종목명", num: false },
   { key: "close", label: "종가", num: true },
   { key: "chg_pct", label: "등락률", num: true },
   { key: "mktcap_100m", label: "시총(억)", num: true },
   { key: "score", label: "점수", num: true },
-  { key: "status", label: "상태", num: false },
 ];
+/* 쌍바닥은 "돌파 후 얼마나 갔는지"가 진입 가능 여부를 가른다 — 넥라인 대비 초과폭과
+   돌파 후 경과일을 표에 직접 세운다. */
+const DB_COLS = [
+  { key: "ext_pct", label: "넥라인대비", num: true,
+    render: (r) => (r.status === "돌파" ? `${r.ext_pct > 0 ? "+" : ""}${r.ext_pct.toFixed(1)}%` : "–") },
+  { key: "days_since_break", label: "돌파후", num: true,
+    render: (r) => (r.status === "돌파" ? `${r.days_since_break}일` : "–") },
+];
+const STATUS_COL = { key: "status", label: "상태", num: false };
+const FRESH_CLS = { 신선: "fresh", 진행: "mid", 소진: "spent" };
+function cols() {
+  return state.tab === "double_bottom"
+    ? [...BASE_COLS, ...DB_COLS, STATUS_COL]
+    : [...BASE_COLS, STATUS_COL];
+}
 const IND_DEFS = [
   { key: "ma5", label: "MA5", color: "#e8c464" },
   { key: "ma20", label: "MA20", color: "#f2994a" },
@@ -26,7 +40,8 @@ const IND_DEFS = [
 const IND_DEFAULT = { ma5: false, ma20: true, ma60: true, ma120: false, bb: false, env: false, rsi: false, macd: false };
 
 let DATA = null;
-let state = { tab: "double_bottom", sortKey: "score", sortDesc: true, selected: null, status: "전체" };
+let state = { tab: "double_bottom", sortKey: "score", sortDesc: true, selected: null,
+  status: "전체", hideSpent: true };
 let chart = null;
 let lastChart = null; // {d, row} 재렌더용
 let ind = loadInd();
@@ -74,14 +89,25 @@ function renderStatusBar() {
   const bar = document.getElementById("statusbar");
   const list = DATA.patterns[state.tab] || [];
   const statuses = [...new Set(list.map((r) => r.status))];
-  if (statuses.length < 2) {
+  const spent = list.filter((r) => r.freshness === "소진").length;
+  if (statuses.length < 2 && !spent) {
     bar.style.display = "none";
     return;
   }
   bar.style.display = "flex";
   bar.innerHTML = "";
+  if (spent) {
+    const chip = document.createElement("button");
+    chip.className = "st-chip" + (state.hideSpent ? " on" : "");
+    chip.title = "넥라인 초과폭이 패턴 깊이를 넘었거나(목표가 도달), 패턴 이전 고점을 회복했거나, "
+      + "신고가이거나, 돌파 후 20일이 지난 종목 — 더는 바닥 반등 자리로 보기 어렵습니다.";
+    chip.innerHTML = `과열 제외<span class="cnt">${spent}</span>`;
+    chip.onclick = () => { state.hideSpent = !state.hideSpent; renderStatusBar(); renderTable(); };
+    bar.appendChild(chip);
+  }
   for (const st of ["전체", ...statuses]) {
-    const cnt = st === "전체" ? list.length : list.filter((r) => r.status === st).length;
+    const pool = state.hideSpent ? list.filter((r) => r.freshness !== "소진") : list;
+    const cnt = st === "전체" ? pool.length : pool.filter((r) => r.status === st).length;
     const chip = document.createElement("button");
     chip.className = "st-chip" + (state.status === st ? " on" : "");
     chip.innerHTML = `${st}<span class="cnt">${cnt}</span>`;
@@ -92,9 +118,10 @@ function renderStatusBar() {
 
 function rows() {
   let list = [...(DATA.patterns[state.tab] || [])];
+  if (state.hideSpent) list = list.filter((r) => r.freshness !== "소진");
   if (state.status !== "전체") list = list.filter((r) => r.status === state.status);
   const { sortKey, sortDesc } = state;
-  const numCol = COLS.find((c) => c.key === sortKey)?.num;
+  const numCol = cols().find((c) => c.key === sortKey)?.num;
   list.sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
     const r = numCol ? x - y : String(x).localeCompare(String(y), "ko");
@@ -106,7 +133,8 @@ function rows() {
 function renderTable() {
   const thead = document.querySelector("#tbl thead");
   const tbody = document.querySelector("#tbl tbody");
-  thead.innerHTML = "<tr>" + COLS.map((c) =>
+  const COL = cols();
+  thead.innerHTML = "<tr>" + COL.map((c) =>
     `<th data-k="${c.key}" class="${state.sortKey === c.key ? "sorted" : ""}">${c.label}${
       state.sortKey === c.key ? (state.sortDesc ? " ▾" : " ▴") : ""}</th>`).join("") + "</tr>";
   thead.querySelectorAll("th").forEach((th) => {
@@ -124,13 +152,16 @@ function renderTable() {
     if (state.selected === r.ticker) tr.className = "selected";
     const chgCls = r.chg_pct > 0 ? "up" : r.chg_pct < 0 ? "dn" : "";
     const hot = ["돌파", "이탈", "신고가"].includes(r.status);
+    const fcls = FRESH_CLS[r.freshness];
     tr.innerHTML =
       `<td><span class="nm">${r.name}</span><span class="mkt">${r.market} ${r.ticker}</span></td>` +
       `<td>${fmt(r.close)}</td>` +
       `<td class="${chgCls}">${r.chg_pct > 0 ? "+" : ""}${r.chg_pct.toFixed(2)}%</td>` +
       `<td>${fmt(r.mktcap_100m)}</td>` +
       `<td>${r.score.toFixed(1)}</td>` +
-      `<td><span class="badge${hot ? " hot" : ""}">${r.status}</span></td>`;
+      COL.filter((c) => c.render).map((c) => `<td>${c.render(r)}</td>`).join("") +
+      `<td><span class="badge${hot ? " hot" : ""}">${r.status}</span>` +
+      (fcls ? `<span class="badge fr-${fcls}">${r.freshness}</span>` : "") + `</td>`;
     tr.title = r.detail || "";
     tr.onclick = () => selectStock(r);
     tbody.appendChild(tr);

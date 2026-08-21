@@ -175,16 +175,60 @@ def detect_double_bottom(b):
                 status = "형성중"
             else:
                 continue
+
+            # ── 돌파 이후 얼마나 갔는지 ────────────────────────────────
+            # 넥라인을 뚫었어도 이미 크게 오른 종목은 '쌍바닥 진입 자리'가 아니다.
+            # 세 가지로 잰다: ①패턴 깊이 대비 초과폭 ②패턴 이전 고점 회복 여부 ③신고가.
+            ext = last / neck - 1 if status == "돌파" else 0.0
+            # 교과서 목표가 = 넥라인 + 패턴 깊이. ext_ratio 1.0이면 목표 도달.
+            ext_ratio = ext / depth if depth else 0.0
+            # 넥라인 위에서 마감한 연속 일수 = 돌파 후 경과일
+            days_since = 0
+            if status == "돌파":
+                for i in range(n - 1, -1, -1):
+                    if cl[i] <= neck:
+                        break
+                    days_since += 1
+            # 패턴 이전 고점 = 첫 저점 직전 120거래일 최고가 (하락이 시작된 자리)
+            prior_hi = max(hi[max(0, p1 - 120):p1]) if p1 > 0 else None
+            above_prior = bool(prior_hi and last > prior_hi)
+            new_high = (last >= max(hi[max(0, n - 252):]) * 0.999
+                        or last >= max(hi[max(0, n - 60):]) * 0.999)
+
+            if status == "형성중":
+                fresh = "형성중"
+            elif ext_ratio > 1.0 or above_prior or new_high or days_since > 20:
+                fresh = "소진"      # 목표 도달·이전 고점 회복·신고가 = 더는 바닥 반등이 아님
+            elif ext_ratio > 0.5 or days_since > 10:
+                fresh = "진행"
+            else:
+                fresh = "신선"
+
             score = (40 * min(depth / 0.15, 1)
                      + 30 * (1 - diff / 0.04)
                      + 20 * max(0.0, 1 - (n - 1 - p2) / 45)
-                     + (10 if status == "돌파" else 0))
+                     + {"신선": 10, "진행": 5, "소진": -25, "형성중": 0}[fresh])
+            detail = f"저점 {l1:,.0f}·{l2:,.0f} / 넥라인 {neck:,.0f} ({status})"
+            if status == "돌파":
+                spent = ("이전 고점 회복" if above_prior else
+                         "신고가" if new_high else
+                         "목표가 도달" if ext_ratio > 1.0 else None)
+                detail += (f" · 넥라인 +{ext * 100:.1f}%(깊이의 {ext_ratio:.2f}배)"
+                           f" · 돌파 후 {days_since}일")
+                if spent:
+                    detail += f" · {spent}"
             cand = {
-                "score": round(score, 1), "status": status,
+                "score": round(score, 1), "status": status, "freshness": fresh,
                 "p1_date": b["date"][p1], "p2_date": b["date"][p2],
                 "low1": l1, "low2": l2, "neckline": neck,
                 "depth_pct": round(depth * 100, 1),
-                "detail": f"저점 {l1:,.0f}·{l2:,.0f} / 넥라인 {neck:,.0f} ({status})",
+                "ext_pct": round(ext * 100, 1),
+                "ext_ratio": round(ext_ratio, 2),
+                "days_since_break": days_since,
+                "prior_high": prior_hi,
+                "above_prior_high": above_prior,
+                "is_new_high": bool(new_high) if status == "돌파" else False,
+                "detail": detail,
             }
             if best is None or cand["score"] > best["score"]:
                 best = cand
@@ -419,6 +463,8 @@ def make_chart_payload(b, base, found):
             {"time": iso(db["p2_date"]), "position": "belowBar", "shape": "arrowUp", "text": "저점2"},
         ]
         payload["lines"].append({"price": db["neckline"], "title": "쌍바닥 넥라인"})
+        if db.get("prior_high"):
+            payload["lines"].append({"price": db["prior_high"], "title": "패턴 이전 고점"})
     hs = found.get("head_shoulders")
     if hs:
         payload["markers"] += [

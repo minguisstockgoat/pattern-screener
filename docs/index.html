@@ -56,6 +56,10 @@ td.up { color: var(--up); } td.dn { color: var(--down); }
 .mkt { color: var(--ink3); font-size: 11px; margin-left: 5px; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--surface2); border: 1px solid var(--border); color: var(--ink2); }
 .badge.hot { color: var(--up); border-color: var(--up); }
+.badge + .badge { margin-left: 4px; }
+.badge.fr-fresh { color: #2fbf71; border-color: #2fbf71; }
+.badge.fr-mid { color: #e8c464; border-color: #e8c464; }
+.badge.fr-spent { color: var(--ink3); border-color: var(--border); }
 .chartwrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; position: sticky; top: 12px; }
 .indbar { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
 .ind-chip {
