@@ -7,20 +7,23 @@ const PATTERNS = [
 ];
 const BASE_COLS = [
   { key: "name", label: "종목명", num: false },
-  { key: "close", label: "종가", num: true },
-  { key: "chg_pct", label: "등락률", num: true },
-  { key: "mktcap_100m", label: "시총(억)", num: true },
-  { key: "score", label: "점수", num: true },
+  { key: "live_price", label: "현재가", num: true },
+  { key: "live_change", label: "등락률", num: true },
+  { key: "live_volume", label: "거래량", num: true },
+  { key: "live_signal", label: "장중 비교(잠정)", num: false },
+  { key: "close", label: "기준 종가", num: true },
+  { key: "mktcap_100m", label: "시총(기준일·억)", num: true },
+  { key: "score", label: "점수(종가)", num: true },
 ];
 /* 쌍바닥은 "돌파 후 얼마나 갔는지"가 진입 가능 여부를 가른다 — 넥라인 대비 초과폭과
    돌파 후 경과일을 표에 직접 세운다. */
 const DB_COLS = [
-  { key: "ext_pct", label: "넥라인대비", num: true,
+  { key: "ext_pct", label: "넥라인대비(종가)", num: true,
     render: (r) => (r.status === "돌파" ? `${r.ext_pct > 0 ? "+" : ""}${r.ext_pct.toFixed(1)}%` : "–") },
   { key: "days_since_break", label: "돌파후", num: true,
     render: (r) => (r.status === "돌파" ? `${r.days_since_break}일` : "–") },
 ];
-const STATUS_COL = { key: "status", label: "상태", num: false };
+const STATUS_COL = { key: "status", label: "확정 상태", num: false };
 const FRESH_CLS = { 신선: "fresh", 진행: "mid", 소진: "spent" };
 function cols() {
   return state.tab === "double_bottom"
@@ -46,6 +49,14 @@ let chart = null;
 let lastChart = null; // {d, row} 재렌더용
 let ind = loadInd();
 
+const quotes = new Map();
+const quoteFailures = new Set();
+const chartCache = new Map();
+let quoteTimer = null, quotesBusy = false, quoteAgain = false;
+let selectionVersion = 0;
+const QUOTE_PROXY = "https://hynix-proxy.eogks879.workers.dev/?url=";
+const QUOTE_INTERVAL = 15000;
+const escapeHtml = text => String(text ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (n) => Number(n).toLocaleString("ko-KR");
 
 function loadInd() {
@@ -67,6 +78,70 @@ async function init() {
     `기준일 ${DATA.base_date.replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3")} · 갱신 ${DATA.generated_at}`;
   renderTabs();
   renderTable();
+  refreshQuotes();
+  document.addEventListener("visibilitychange", () => {
+    clearTimeout(quoteTimer);
+    if (!document.hidden) refreshQuotes();
+  });
+}
+
+function quoteView(row) {
+  const q = quotes.get(row.ticker), failed = quoteFailures.has(row.ticker);
+  return { ...row, live_price: q?.price ?? null, live_change: q?.change ?? null,
+    live_volume: q?.volume ?? null, live_signal: LiveQuotes.signal(row, state.tab, q, failed),
+    quote_status: LiveQuotes.status(q, failed), quote: q };
+}
+
+function requestQuotes() {
+  clearTimeout(quoteTimer);
+  if (quotesBusy) quoteAgain = true;
+  else refreshQuotes();
+}
+
+async function refreshQuotes() {
+  if (document.hidden || !DATA) return;
+  if (quotesBusy) { quoteAgain = true; return; }
+  clearTimeout(quoteTimer);
+  quotesBusy = true;
+  const tickers = [...new Set([...(DATA.patterns[state.tab] || []).map(r => r.ticker), state.selected].filter(Boolean))];
+  const batches = [];
+  for (let i = 0; i < tickers.length; i += 20) batches.push(tickers.slice(i, i + 20));
+  try {
+    await Promise.all(Array.from({length: Math.min(2, batches.length)}, async () => {
+      while (batches.length) {
+        const batch = batches.shift();
+        try {
+          const target = "https://polling.finance.naver.com/api/realtime/domestic/stock/" + batch.join(",");
+          const res = await fetch(QUOTE_PROXY + encodeURIComponent(target), { cache: "no-store", signal: AbortSignal.timeout(9000) });
+          if (!res.ok) throw new Error(`시세 응답 ${res.status}`);
+          const body = await res.json();
+          if (!Array.isArray(body.datas)) throw new Error("시세 데이터 없음");
+          const received = new Set();
+          for (const item of body.datas) {
+            const q = LiveQuotes.parse(item);
+            if (!q || !batch.includes(q.ticker)) continue;
+            const previous = quotes.get(q.ticker);
+            if (previous && Date.parse(q.at) < Date.parse(previous.at)) continue;
+            quotes.set(q.ticker, q); quoteFailures.delete(q.ticker); received.add(q.ticker);
+          }
+          for (const ticker of batch) if (!received.has(ticker)) quoteFailures.add(ticker);
+        } catch (_) { batch.forEach(ticker => quoteFailures.add(ticker)); }
+      }
+    }));
+    renderTable();
+    if (lastChart) drawChart(lastChart.d, lastChart.row, true);
+    const current = tickers.map(t => LiveQuotes.status(quotes.get(t), quoteFailures.has(t)));
+    const live = current.filter(s => s === "장중").length;
+    const closed = current.filter(s => s === "장 마감").length;
+    const unavailable = current.length - live - closed;
+    document.getElementById("liveMeta").textContent =
+      `KRX 시세 · 장중 ${live}종 · 장 마감 ${closed}종` + (unavailable ? ` · 지연/이전/미수신 ${unavailable}종` : "") +
+      " · 현재 탭 15초 주기 조회 · 개별 체결 시각은 현재가 아래 표시";
+  } finally {
+    quotesBusy = false;
+    const retrySoon = quoteAgain; quoteAgain = false;
+    if (!document.hidden) quoteTimer = setTimeout(refreshQuotes, retrySoon ? 0 : QUOTE_INTERVAL);
+  }
 }
 
 function renderTabs() {
@@ -78,7 +153,14 @@ function renderTabs() {
     btn.innerHTML = `${p.label}<span class="cnt">${(DATA.patterns[p.key] || []).length}</span>`;
     btn.onclick = () => {
       state.tab = p.key; state.sortKey = "score"; state.sortDesc = true; state.status = "전체";
-      renderTabs(); renderTable();
+      selectionVersion++;
+      state.selected = null;
+      lastChart = null;
+      if (chart) { chart.remove(); chart = null; }
+      document.getElementById("chartHead").textContent = "차트 · 종목을 선택하세요";
+      document.getElementById("chart").innerHTML = '<div class="placeholder">종목을 선택하면 캔들차트가 표시됩니다</div>';
+      document.getElementById("detail").textContent = "";
+      renderTabs(); renderTable(); requestQuotes();
     };
     nav.appendChild(btn);
   }
@@ -120,10 +202,13 @@ function rows() {
   let list = [...(DATA.patterns[state.tab] || [])];
   if (state.hideSpent) list = list.filter((r) => r.freshness !== "소진");
   if (state.status !== "전체") list = list.filter((r) => r.status === state.status);
+  list = list.map(quoteView);
   const { sortKey, sortDesc } = state;
   const numCol = cols().find((c) => c.key === sortKey)?.num;
   list.sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
+    if (numCol && (x == null || !Number.isFinite(x))) return y == null || !Number.isFinite(y) ? 0 : 1;
+    if (numCol && (y == null || !Number.isFinite(y))) return -1;
     const r = numCol ? x - y : String(x).localeCompare(String(y), "ko");
     return sortDesc ? -r : r;
   });
@@ -150,18 +235,25 @@ function renderTable() {
   for (const r of rows()) {
     const tr = document.createElement("tr");
     if (state.selected === r.ticker) tr.className = "selected";
-    const chgCls = r.chg_pct > 0 ? "up" : r.chg_pct < 0 ? "dn" : "";
-    const hot = ["돌파", "이탈", "신고가"].includes(r.status);
-    const fcls = FRESH_CLS[r.freshness];
-    tr.innerHTML =
-      `<td><span class="nm">${r.name}</span><span class="mkt">${r.market} ${r.ticker}</span></td>` +
-      `<td>${fmt(r.close)}</td>` +
-      `<td class="${chgCls}">${r.chg_pct > 0 ? "+" : ""}${r.chg_pct.toFixed(2)}%</td>` +
-      `<td>${fmt(r.mktcap_100m)}</td>` +
-      `<td>${r.score.toFixed(1)}</td>` +
-      COL.filter((c) => c.render).map((c) => `<td>${c.render(r)}</td>`).join("") +
-      `<td><span class="badge${hot ? " hot" : ""}">${r.status}</span>` +
-      (fcls ? `<span class="badge fr-${fcls}">${r.freshness}</span>` : "") + `</td>`;
+    tr.innerHTML = COL.map(c => {
+      const value = r[c.key];
+      if (c.key === "name") return `<td><span class="nm">${escapeHtml(r.name)}</span><span class="mkt">${r.market} ${r.ticker}</span></td>`;
+      if (c.key === "live_price") {
+        const stamp = r.quote ? `${r.quote.date.slice(5)} ${r.quote.at.slice(11, 19)}` : "";
+        return `<td class="quote-cell">${value == null ? "—" : fmt(value)}<small class="${r.quote_status === "장중" ? "live" : "muted"}">${r.quote_status} ${stamp}</small></td>`;
+      }
+      if (c.key === "live_change") return `<td class="${value > 0 ? "up" : value < 0 ? "dn" : ""}">${Number.isFinite(value) ? `${value > 0 ? "+" : ""}${value.toFixed(2)}%` : "—"}</td>`;
+      if (c.key === "live_volume") return `<td>${Number.isFinite(value) ? fmt(value) : "—"}</td>`;
+      if (c.key === "live_signal") return `<td class="live-signal">${value}</td>`;
+      if (c.key === "status") {
+        const hot = ["돌파", "이탈", "신고가"].includes(r.status);
+        const fcls = FRESH_CLS[r.freshness];
+        return `<td><span class="badge${hot ? " hot" : ""}">${r.status}</span>` +
+          (fcls ? `<span class="badge fr-${fcls}">${r.freshness}</span>` : "") + "</td>";
+      }
+      if (c.render) return `<td>${c.render(r)}</td>`;
+      return `<td>${c.key === "score" ? value.toFixed(1) : fmt(value)}</td>`;
+    }).join("");
     tr.title = r.detail || "";
     tr.onclick = () => selectStock(r);
     tbody.appendChild(tr);
@@ -169,12 +261,27 @@ function renderTable() {
 }
 
 async function selectStock(row) {
+  const version = ++selectionVersion;
   state.selected = row.ticker;
+  lastChart = null;
+  if (chart) { chart.remove(); chart = null; }
+  document.getElementById("chartHead").textContent = `${row.name} · 차트 불러오는 중…`;
+  document.getElementById("detail").textContent = "";
   renderTable();
-  const res = await fetch(`data/charts/${row.ticker}.json?v=${DATA.base_date}`);
-  const d = await res.json();
-  lastChart = { d, row };
-  drawChart(d, row);
+  requestQuotes();
+  try {
+    let d = chartCache.get(row.ticker);
+    if (!d) {
+      const res = await fetch(`data/charts/${row.ticker}.json?v=${DATA.base_date}`);
+      if (!res.ok) throw new Error("chart unavailable");
+      d = await res.json(); chartCache.set(row.ticker, d);
+    }
+    if (version !== selectionVersion) return;
+    lastChart = { d, row };
+    drawChart(d, row);
+  } catch (_) {
+    if (version === selectionVersion) document.getElementById("chartHead").textContent = `${row.name} · 차트 조회 실패, 다시 선택해 주세요`;
+  }
 }
 
 // ---------------------------------------------------------------- 보조지표 계산
@@ -269,7 +376,11 @@ function renderIndBar() {
   }
 }
 
-function drawChart(d, row) {
+function drawChart(d, row, preserveView = false) {
+  const visibleRange = preserveView && chart ? chart.timeScale().getVisibleLogicalRange() : null;
+  const original = d;
+  const q = quotes.get(row.ticker), failed = quoteFailures.has(row.ticker);
+  d = { ...d, candles: LiveQuotes.candles(d.candles, q, failed) };
   const el = document.getElementById("chart");
   el.innerHTML = "";
   if (chart) { chart.remove(); chart = null; }
@@ -387,12 +498,20 @@ function drawChart(d, row) {
   const panes = chart.panes();
   for (let i = 1; i < panes.length; i++) panes[i].setHeight(110);
 
-  chart.timeScale().fitContent();
+  if (visibleRange) chart.timeScale().setVisibleLogicalRange(visibleRange);
+  else chart.timeScale().fitContent();
 
+  const quoteStatus = LiveQuotes.status(q, failed);
+  const extra = q ? ` · 현재가 ${fmt(q.price)} (${quoteStatus} · ${q.date} ${q.at.slice(11, 19)} KST)` : ` · ${quoteStatus}`;
   document.getElementById("chartHead").innerHTML =
-    `<h2>${d.name}</h2><span class="sub">${d.market} ${d.ticker} · 종가 ${fmt(row.close)} · ` +
-    `${row.chg_pct > 0 ? "+" : ""}${row.chg_pct.toFixed(2)}%</span>`;
-  document.getElementById("detail").textContent = row.detail || "";
+    `<h2>${escapeHtml(d.name)}</h2><span class="sub">${d.market} ${d.ticker} · 기준 종가 ${fmt(row.close)}${extra}</span>`;
+  const gap = q && LiveQuotes.hasHistoryGap(original.candles.at(-1)?.time, q.date);
+  const hasQuoteBar = q && d.candles.at(-1)?.time === q.date && ["장중", "장 마감"].includes(quoteStatus);
+  document.getElementById("detail").textContent = `종가 기준: ${row.detail || ""}` +
+    (hasQuoteBar ? " · 마지막 봉과 보조지표에 오늘 KRX 시세 반영(미확정)" : " · 차트는 수집된 종가 기준") +
+    (hasQuoteBar && gap ? " · 중간 평일의 일봉이 없습니다(휴장일일 수 있음). 차트·보조지표 해석에 유의하세요." : "");
 }
 
-init();
+init().catch(() => {
+  document.getElementById("meta").textContent = "패턴 데이터를 불러오지 못했습니다. 새로고침해 주세요.";
+});
